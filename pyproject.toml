@@ -1,0 +1,27 @@
+[project]
+name = "horizon-utils"
+version = "0.1.0"
+description = ""
+authors = [
+  { name = "Simon Warder", email = "s.warder15@imperial.ac.uk" }
+]
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "" }
+dependencies = [
+    "trimesh >=4.7.1, <5.0.0",
+    "numpy >=2.3.2, <3.0.0",
+    "segyio >=1.9.13, <2.0.0",
+    "scikit-learn >=1.7.1, <2.0.0",
+    "scipy >=1.16.1, <2.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
