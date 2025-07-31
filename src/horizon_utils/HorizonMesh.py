@@ -1,8 +1,11 @@
 import numpy as np
+import scipy
 import trimesh
 import segyio
 from sklearn.linear_model import LinearRegression
 from scipy.spatial import Delaunay
+from scipy.interpolate import griddata
+import pandas as pd
 
 class HorizonMesh:
     def __init__(self, vertices, faces, crs):
@@ -54,6 +57,56 @@ class HorizonMesh:
                     faces.append([int(parts[1]), int(parts[2]), int(parts[3])])
 
         return cls(np.array(vertices), np.array(faces), crs='utm')
+
+    @classmethod
+    def from_text_file(cls, file_path, crs, **kwargs):
+        """Load mesh from a text file.
+
+        Args:
+            file_path: Path to the text file containing vertices.
+            **kwargs: Additional arguments for loading vertices.
+
+        Returns:
+            HorizonMesh: An instance of HorizonMesh.
+        """
+        vertices = pd.read_csv(file_path, **kwargs).values
+        return cls.from_vertices(vertices, crs)
+    
+    @classmethod
+    def from_DUG_ilclt(cls, filename):
+        """Load mesh from a DUG ilclt file.
+
+        Args:
+            filename: Path to the DUG ilclt file.
+
+        Returns:
+            HorizonMesh: An instance of HorizonMesh.
+        """
+        return cls.from_text_file(filename, crs='inline_crossline', sep=r'\s+', comment='#')
+    
+    @classmethod
+    def from_dugmsh(cls, filename):
+        """Load mesh from a .dugmsh file.
+
+        Args:
+            filename: Path to the dugmsh file.
+
+        Returns:
+            HorizonMesh: An instance of HorizonMesh.
+        """
+        return cls.from_text_file(filename, crs='inline_crossline', sep=r'\s+', skiprows=14)
+    
+    @classmethod
+    def from_DUG_dat(cls, filename):
+        """Load mesh from a DUG dat file.
+
+        Args:
+            filename: Path to the DUG dat file.
+
+        Returns:
+            HorizonMesh: An instance of HorizonMesh.
+        """
+        return cls.from_text_file(filename, crs='inline_crossline', sep=r'\s+', usecols=[0, 1, 4])
     
     @classmethod
     def from_vertices(cls, vertices, crs):
@@ -121,7 +174,34 @@ class HorizonMesh:
 
         return transform
     
-    def save(self, filename):
+    def to_file(self, filename, format, **kwargs):
         """Save the HorizonMesh to file"""
-        m = trimesh.Trimesh(vertices=self.vertices, faces=self.faces, process=False)
-        m.export(filename)
+        if format == 'trimesh':
+            m = trimesh.Trimesh(vertices=self.vertices, faces=self.faces, process=False)
+            m.export(filename)
+        elif format == 'text':
+            with open(filename, 'w') as f:
+                sep = kwargs.get('sep', '\t')
+                vertices_df = pd.DataFrame(self.vertices, columns=['x', 'y', 'z']).dropna()
+                vertices_df.to_csv(f, sep=sep, index=False, header=False)
+        else:
+            raise NotImplementedError
+
+    def regrid(self, resolution):
+        """Regrid the mesh to a new resolution.
+
+        Args:
+            resolution: The new resolution for the mesh.
+        """
+        new_x = np.arange(int(self.vertices[:, 0].min())+1, self.vertices[:, 0].max(), resolution)
+        new_y = np.arange(int(self.vertices[:, 1].min())+1, self.vertices[:, 1].max(), resolution)
+        new_x, new_y = np.meshgrid(new_x, new_y)
+
+        # Regrid
+        new_z = griddata((self.vertices[:,0], self.vertices[:,1]), self.vertices[:, 2],
+                          (new_x, new_y), method='linear')
+        new_vertices = np.column_stack([new_x.flatten(), new_y.flatten(), new_z.flatten()])
+        new_faces = Delaunay(new_vertices[:, :2]).simplices
+        self.vertices = new_vertices
+        self.faces = new_faces
+        return self
