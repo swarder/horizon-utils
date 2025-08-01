@@ -1,5 +1,4 @@
 import numpy as np
-import scipy
 import trimesh
 import segyio
 from sklearn.linear_model import LinearRegression
@@ -7,30 +6,84 @@ from scipy.spatial import Delaunay
 from scipy.interpolate import griddata
 import pandas as pd
 
+def derive_transformations(segy_file):
+    """Derive transformation parameters from a SEGY file."""
+    with segyio.open(segy_file, "r", ignore_geometry=True) as f:
+        inlines = f.attributes(segyio.TraceField.INLINE_3D)[:]
+        crosslines = f.attributes(segyio.TraceField.CROSSLINE_3D)[:]
+        xs = f.attributes(segyio.TraceField.CDP_X)[:]/100
+        ys = f.attributes(segyio.TraceField.CDP_Y)[:]/100
+
+    x_utm = np.column_stack([xs, ys])
+    x_ilcl = np.column_stack([inlines, crosslines])
+
+    i0 = 0
+    i1 = np.argmax(inlines)
+    i2 = np.argmax(crosslines)
+
+    assert inlines[i0] == inlines[i2]
+    assert crosslines[i0] == crosslines[i1]
+
+    stretch_matrix = np.array([
+        [np.linalg.norm(x_utm[i1] - x_utm[i0]) / np.linalg.norm(x_ilcl[i1] - x_ilcl[i0]), 0],
+        [0, np.linalg.norm(x_utm[i2] - x_utm[i0]) / np.linalg.norm(x_ilcl[i2] - x_ilcl[i0])]
+    ])
+
+    rotation_angle = np.arctan2((x_utm[i1,1] - x_utm[i0,1]), (x_utm[i1,0] - x_utm[i0,0]))
+
+    rotation_matrix = np.array([
+        [np.cos(rotation_angle), -np.sin(rotation_angle)],
+        [np.sin(rotation_angle), np.cos(rotation_angle)]
+    ])
+
+    origin_ilcl = x_ilcl[i0]
+    origin_utm = x_utm[i0]
+
+    def transform_ix_to_utm(x_ilcl):
+        """Transform (inline, crossline) to (easting, northing)."""
+        return origin_utm[None,:] + (rotation_matrix @ stretch_matrix @ (x_ilcl - origin_ilcl).T).T
+    
+    def transform_utm_to_ix(x_utm):
+        """Transform (easting, northing) to (inline, crossline)."""
+        return origin_ilcl[None,:] + (np.linalg.inv(rotation_matrix @ stretch_matrix) @ (x_utm - origin_utm).T).T
+    
+    return transform_ix_to_utm, transform_utm_to_ix
+    
+
 class HorizonMesh:
     def __init__(self, vertices, faces, crs):
         self.vertices = vertices
         self.faces = faces
         self.crs = crs
 
-    def convert_to_utm(self, segy_file):
-        """Transform mesh vertices to UTM coordinates using a SEGY file."""
+        # Initialise transformation functions
+        self.transform_ix_to_utm = None
+        self.transform_utm_to_ix = None
+
+    def initialise_transformations(self, segy_file):
+        """Initialise the transformation functions for inline/crossline to UTM and vice versa."""
+        self.transform_ix_to_utm, self.transform_utm_to_ix = derive_transformations(segy_file)
+
+    def convert_to_utm(self):
+        """Transform mesh vertices from inline/crossline to UTM coordinates."""
         if self.crs == 'utm':
             print("Mesh is already in UTM coordinates.")
             return
+        elif self.transform_ix_to_utm is None:
+            raise ValueError("Transformation functions not initialized. Call initialise_transformers with a SEGY file first.")
         else:
-            transformer = self.generate_ix_to_utm_transformer(segy_file)
-            self.vertices[:,:2] = transformer(self.vertices[:,:2])
+            self.vertices[:,:2] = self.transform_ix_to_utm(self.vertices[:,:2])
             self.crs = 'utm'
-    
-    def convert_from_utm(self, segy_file):
-        """Transform mesh vertices from UTM coordinates using a SEGY file."""
+
+    def convert_to_ilcl(self):
+        """Transform mesh vertices from UTM coordinates to inline/crossline."""
         if self.crs == 'inline_crossline':
             print("Mesh is already in inline/crossline coordinates.")
             return
-        elif self.crs == 'utm':
-            transformer = self.generate_utm_to_ix_transformer(segy_file)
-            self.vertices[:,:2] = transformer(self.vertices[:,:2])
+        elif self.transform_utm_to_ix is None:
+            raise ValueError("Transformation functions not initialized. Call initialise_transformers with a SEGY file first.")
+        else:
+            self.vertices[:,:2] = self.transform_utm_to_ix(self.vertices[:,:2])
             self.crs = 'inline_crossline'
     
     @classmethod
@@ -122,67 +175,24 @@ class HorizonMesh:
         tri = Delaunay(vertices[:,:2])
         faces = tri.simplices
         return cls(vertices, faces, crs=crs)
-
-    @classmethod
-    def generate_utm_to_ix_transformer(cls, segy_file):
-        """Generate transformer from UTM to I/X.
-
-        Args:
-            segy_file: The SEGY file containing the necessary transformation information.
-        """
-        # Load the SEGY file and extract the necessary transformation information
-        with segyio.open(segy_file, "r", ignore_geometry=True) as f:
-            inlines = f.attributes(segyio.TraceField.INLINE_3D)[:]
-            crosslines = f.attributes(segyio.TraceField.CROSSLINE_3D)[:]
-            xs = f.attributes(segyio.TraceField.CDP_X)[:]/100
-            ys = f.attributes(segyio.TraceField.CDP_Y)[:]/100
-
-        grid = np.column_stack([xs, ys])
-        reg_east = LinearRegression().fit(grid, inlines)
-        reg_north = LinearRegression().fit(grid, crosslines)
-
-        def transform(vertices_utm):
-            """Transform (easting, northing) to (inline, crossline)."""
-            i_pred = reg_east.predict(vertices_utm)
-            x_pred = reg_north.predict(vertices_utm)
-            return np.stack([i_pred, x_pred], axis=-1)
-
-        return transform
-    
-    @classmethod
-    def generate_ix_to_utm_transformer(cls, segy_file):
-        """Generate transformer from I/X to UTM.
-
-        Args:
-            segy_file: The SEGY file containing the necessary transformation information.
-        """
-        with segyio.open(segy_file, "r", ignore_geometry=True) as f:
-            inlines = f.attributes(segyio.TraceField.INLINE_3D)[:]
-            crosslines = f.attributes(segyio.TraceField.CROSSLINE_3D)[:]
-            xs = f.attributes(segyio.TraceField.CDP_X)[:]/100
-            ys = f.attributes(segyio.TraceField.CDP_Y)[:]/100
-
-        grid = np.column_stack([inlines, crosslines])
-        reg_east = LinearRegression().fit(grid, xs)
-        reg_north = LinearRegression().fit(grid, ys)
-
-        def transform(vertices_ix):
-            """Transform (inline, crossline) to (easting, northing)."""
-            e_pred = reg_east.predict(vertices_ix)
-            n_pred = reg_north.predict(vertices_ix)
-            return np.stack([e_pred, n_pred], axis=-1)
-
-        return transform
-    
+        
     def to_file(self, filename, format, **kwargs):
-        """Save the HorizonMesh to file"""
+        """Save the HorizonMesh to a file.
+
+        Args:
+            filename: Path to the output file.
+            format: The format to save the file in (e.g. 'trimesh', 'text').
+
+        Raises:
+            NotImplementedError: If the format is not supported.
+        """
         if format == 'trimesh':
             m = trimesh.Trimesh(vertices=self.vertices, faces=self.faces, process=False)
             m.export(filename)
         elif format == 'text':
             with open(filename, 'w') as f:
                 sep = kwargs.get('sep', '\t')
-                vertices_df = pd.DataFrame(self.vertices, columns=['x', 'y', 'z']).dropna()
+                vertices_df = pd.DataFrame(self.vertices, columns=['x', 'y', 'z'])
                 vertices_df.to_csv(f, sep=sep, index=False, header=False)
         else:
             raise NotImplementedError
@@ -200,8 +210,18 @@ class HorizonMesh:
         # Regrid
         new_z = griddata((self.vertices[:,0], self.vertices[:,1]), self.vertices[:, 2],
                           (new_x, new_y), method='linear')
+        
+        non_nan_mask = ~np.isnan(new_z)
+        new_z = new_z[non_nan_mask]
+        new_x = new_x[non_nan_mask]
+        new_y = new_y[non_nan_mask]
+
         new_vertices = np.column_stack([new_x.flatten(), new_y.flatten(), new_z.flatten()])
+
+        # Re-mesh with new vertices
         new_faces = Delaunay(new_vertices[:, :2]).simplices
+        
         self.vertices = new_vertices
         self.faces = new_faces
+
         return self

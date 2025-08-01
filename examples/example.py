@@ -12,8 +12,12 @@ print(mesh.crs)
 print("Original vertices:\n", mesh.vertices)
 orig_vertices = mesh.vertices.copy()
 
+# Initialise transformations using SEGY file
+mesh.initialise_transformations(segy_file)
+print("Transformations initialized.")
+
 # Convert from UTM to inline/crossline using information from SEGY file
-mesh.convert_from_utm(segy_file)
+mesh.convert_to_ilcl()
 print(mesh.crs)
 print("Vertices after converting from UTM:\n", mesh.vertices)
 
@@ -21,7 +25,7 @@ print("Vertices after converting from UTM:\n", mesh.vertices)
 mesh.to_file(mesh_output_file_obj, format='trimesh')
 
 # Convert back to UTM coordinates to test transformation
-mesh.convert_to_utm(segy_file)
+mesh.convert_to_utm()
 print(mesh.crs)
 print("Vertices after converting back to UTM:\n", mesh.vertices)
 
@@ -31,6 +35,6 @@ print(np.allclose(orig_vertices, mesh.vertices))
 # Save mesh to text files
 mesh.to_file('H53_subcube_mesh.xy', format='text', sep='\t')
 
-mesh.convert_from_utm(segy_file)
+mesh.convert_to_ilcl()
 mesh.regrid(resolution=5)
 mesh.to_file('H53_subcube_mesh.ilcl', format='text', sep='\t')
