@@ -1,7 +1,6 @@
 import numpy as np
 import trimesh
 import segyio
-from sklearn.linear_model import LinearRegression
 from scipy.spatial import Delaunay
 from scipy.interpolate import griddata
 import pandas as pd
@@ -70,7 +69,7 @@ class HorizonMesh:
             print("Mesh is already in UTM coordinates.")
             return
         elif self.transform_ix_to_utm is None:
-            raise ValueError("Transformation functions not initialized. Call initialise_transformers with a SEGY file first.")
+            raise ValueError("Transformation functions not initialized. Call initialise_transformations with a SEGY file first.")
         else:
             self.vertices[:,:2] = self.transform_ix_to_utm(self.vertices[:,:2])
             self.crs = 'utm'
@@ -81,7 +80,7 @@ class HorizonMesh:
             print("Mesh is already in inline/crossline coordinates.")
             return
         elif self.transform_utm_to_ix is None:
-            raise ValueError("Transformation functions not initialized. Call initialise_transformers with a SEGY file first.")
+            raise ValueError("Transformation functions not initialized. Call initialise_transformations with a SEGY file first.")
         else:
             self.vertices[:,:2] = self.transform_utm_to_ix(self.vertices[:,:2])
             self.crs = 'inline_crossline'
