@@ -1,5 +1,6 @@
 from horizon_utils import HorizonMesh
 import numpy as np
+import copy
 
 # Define input/output paths
 ts_file = 'H53_subcube_mesh.ts'
@@ -22,7 +23,10 @@ print(mesh.crs)
 print("Vertices after converting from UTM:\n", mesh.vertices)
 
 # Save the mesh to an OBJ file, in inline/crossline coordinates
-mesh.to_file(mesh_output_file_obj, format='trimesh')
+mesh_rescaled = copy.deepcopy(mesh)
+mesh_rescaled.rescale()
+mesh_rescaled.reset_origin()
+mesh_rescaled.to_file(mesh_output_file_obj, format='trimesh')
 
 # Convert back to UTM coordinates to test transformation
 mesh.convert_to_utm()

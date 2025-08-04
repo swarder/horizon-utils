@@ -224,3 +224,24 @@ class HorizonMesh:
         self.faces = new_faces
 
         return self
+    
+    def rescale(self, target_size=[1,1,1]):
+        """Rescale the mesh to a new size.
+
+        Args:
+            target_size: A list of three values representing the target size in each dimension.
+        """
+        scale_factors = np.array(target_size) / np.array(self.vertices.max(axis=0) - self.vertices.min(axis=0))
+        self.vertices *= scale_factors
+
+        return self
+    
+    def reset_origin(self, new_origin=[0,0,0]):
+        """Reset the origin of the mesh to a new point.
+
+        Args:
+            new_origin: A list of three values representing the new origin coordinates.
+        """
+        self.vertices -= self.vertices.mean(axis=0) - np.array(new_origin)
+
+        return self
