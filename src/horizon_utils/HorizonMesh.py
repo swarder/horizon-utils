@@ -5,6 +5,13 @@ from scipy.spatial import Delaunay
 from scipy.interpolate import griddata
 import pandas as pd
 
+def get_std_amplitude_from_segy(segy_file):
+    """Get the std dev of amplitude from a SEGY file."""
+    with segyio.open(segy_file, "r", ignore_geometry=True) as f:
+        traces = np.array([trace for trace in f.trace])
+        std_amplitude = np.std(traces)
+    return std_amplitude
+
 def derive_transformations(segy_file):
     """Derive transformation parameters from a SEGY file."""
     with segyio.open(segy_file, "r", ignore_geometry=True) as f:
@@ -289,16 +296,21 @@ class HorizonMesh:
             y_min = crosslines.min()
             y_max = crosslines.max()
                 
-            sample_interval = f.bin[segyio.BinField.Interval] / 1e6
+            sample_interval = f.bin[segyio.BinField.Interval] / 1e3
             num_samples = f.bin[segyio.BinField.Samples]
-            zs = np.arange(num_samples) * sample_interval
+            zs = np.arange(num_samples) * sample_interval + f.header[0].get(segyio.TraceField.DelayRecordingTime, 0)
             z_min = zs.min()
             z_max = zs.max()
         
-        self.vertices[:, 0] = (self.vertices[:, 0] - x_min) / (x_max - x_min)
-        self.vertices[:, 1] = (self.vertices[:, 1] - y_min) / (y_max - y_min)
-        self.vertices[:, 2] = (self.vertices[:, 2] - z_min) / (z_max - z_min)
+        self.vertices[:, 0] = (self.vertices[:, 0] - x_min) / (x_max - x_min) - 0.5
+        self.vertices[:, 1] = (self.vertices[:, 1] - y_min) / (y_max - y_min) - 0.5
+        self.vertices[:, 2] = (self.vertices[:, 2] - z_min) / (z_max - z_min) - 0.5
 
         self.crs = 'scaled_to_segy'
 
+        return self
+
+    def swap_yz(self):
+        """Swap the Y and Z coordinates of the mesh vertices."""
+        self.vertices[:,[1,2]] = self.vertices[:,[2,1]]
         return self
