@@ -46,8 +46,12 @@ def derive_transformations(segy_file):
         """Transform (easting, northing) to (inline, crossline)."""
         return origin_ilcl[None,:] + (np.linalg.inv(rotation_matrix @ stretch_matrix) @ (x_utm - origin_utm).T).T
     
-    return transform_ix_to_utm, transform_utm_to_ix
-    
+    def transform_ix_to_dimensioned_ix(x_ilcl):
+        """Transform (inline, crossline) to dimensioned inline/crossline."""
+        return x_ilcl @ stretch_matrix.T
+
+    return transform_ix_to_utm, transform_utm_to_ix, transform_ix_to_dimensioned_ix
+
 
 class HorizonMesh:
     def __init__(self, vertices, faces, crs):
@@ -58,10 +62,11 @@ class HorizonMesh:
         # Initialise transformation functions
         self.transform_ix_to_utm = None
         self.transform_utm_to_ix = None
+        self.transform_ix_to_dimensioned_ix = None
 
     def initialise_transformations(self, segy_file):
         """Initialise the transformation functions for inline/crossline to UTM and vice versa."""
-        self.transform_ix_to_utm, self.transform_utm_to_ix = derive_transformations(segy_file)
+        self.transform_ix_to_utm, self.transform_utm_to_ix, self.transform_ix_to_dimensioned_ix = derive_transformations(segy_file)
 
     def convert_to_utm(self):
         """Transform mesh vertices from inline/crossline to UTM coordinates."""
@@ -70,9 +75,11 @@ class HorizonMesh:
             return
         elif self.transform_ix_to_utm is None:
             raise ValueError("Transformation functions not initialized. Call initialise_transformations with a SEGY file first.")
-        else:
+        elif self.crs == 'inline_crossline':
             self.vertices[:,:2] = self.transform_ix_to_utm(self.vertices[:,:2])
             self.crs = 'utm'
+        else:
+            raise NotImplementedError("Conversion from current CRS to UTM is not implemented.")
 
     def convert_to_ilcl(self):
         """Transform mesh vertices from UTM coordinates to inline/crossline."""
@@ -81,9 +88,28 @@ class HorizonMesh:
             return
         elif self.transform_utm_to_ix is None:
             raise ValueError("Transformation functions not initialized. Call initialise_transformations with a SEGY file first.")
-        else:
+        elif self.crs == 'utm':
             self.vertices[:,:2] = self.transform_utm_to_ix(self.vertices[:,:2])
             self.crs = 'inline_crossline'
+        else:
+            raise NotImplementedError("Conversion from current CRS to inline/crossline is not implemented.")
+    
+    def convert_to_dimensioned_ilcl(self):
+        """Transform mesh vertices to dimensioned inline/crossline coordinates."""
+        if self.crs == 'dimensioned_inline_crossline':
+            print("Mesh is already in dimensioned inline/crossline coordinates.")
+            return
+        elif self.transform_ix_to_dimensioned_ix is None:
+            raise ValueError("Transformation functions not initialized. Call initialise_transformations with a SEGY file first.")
+        elif self.crs == 'inline_crossline':
+            self.vertices[:,:2] = self.transform_ix_to_dimensioned_ix(self.vertices[:,:2])
+            self.crs = 'dimensioned_inline_crossline'
+        elif self.crs == 'utm':
+            self.convert_to_ilcl()
+            self.vertices[:,:2] = self.transform_ix_to_dimensioned_ix(self.vertices[:,:2])
+            self.crs = 'dimensioned_inline_crossline'
+        else:
+            raise NotImplementedError
     
     @classmethod
     def from_ts(cls, ts_path):
@@ -243,5 +269,36 @@ class HorizonMesh:
             new_origin: A list of three values representing the new origin coordinates.
         """
         self.vertices -= self.vertices.mean(axis=0) - np.array(new_origin)
+
+        return self
+    
+    def rescale_to_segy(self, segy_file):
+        """Rescale all axes to 0-1 range based on seismic volume provided.
+
+        Args:
+            segy_file: Path to the SEGY file to derive the scaling factors.
+        """
+        if not self.crs == 'inline_crossline':
+            self.convert_to_ilcl()
+            print('Converted to inline/crossline coordinates prior to rescaling.')
+        with segyio.open(segy_file, "r", ignore_geometry=True) as f:
+            inlines = f.attributes(segyio.TraceField.INLINE_3D)[:]
+            crosslines = f.attributes(segyio.TraceField.CROSSLINE_3D)[:]
+            x_min = inlines.min()
+            x_max = inlines.max()
+            y_min = crosslines.min()
+            y_max = crosslines.max()
+                
+            sample_interval = f.bin[segyio.BinField.Interval] / 1e6
+            num_samples = f.bin[segyio.BinField.Samples]
+            zs = np.arange(num_samples) * sample_interval
+            z_min = zs.min()
+            z_max = zs.max()
+        
+        self.vertices[:, 0] = (self.vertices[:, 0] - x_min) / (x_max - x_min)
+        self.vertices[:, 1] = (self.vertices[:, 1] - y_min) / (y_max - y_min)
+        self.vertices[:, 2] = (self.vertices[:, 2] - z_min) / (z_max - z_min)
+
+        self.crs = 'scaled_to_segy'
 
         return self
