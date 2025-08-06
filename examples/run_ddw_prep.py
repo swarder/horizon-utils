@@ -15,7 +15,7 @@ for file in horizon_point_cloud_files:
     horizon_mesh.initialise_transformations(segy_file)
     horizon_mesh.convert_to_ilcl()
     horizon_mesh.rescale_to_segy(segy_file)
-    horizon_mesh.swap_yz()
+    horizon_mesh.prepare_for_unity()
     output_file = file + '.obj'
     horizon_mesh.to_file(output_file, format='trimesh')
     print(horizon_mesh.vertices.min(axis=0), horizon_mesh.vertices.max(axis=0))

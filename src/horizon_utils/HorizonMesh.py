@@ -310,7 +310,9 @@ class HorizonMesh:
 
         return self
 
-    def swap_yz(self):
-        """Swap the Y and Z coordinates of the mesh vertices."""
-        self.vertices[:,[1,2]] = self.vertices[:,[2,1]]
+    def prepare_for_unity(self):
+        """Re-arrange coordinates for importing into Unity."""
+        self.vertices = self.vertices[:,[1,2,0]]
+        self.vertices[:,[0,1]] *= -1
+
         return self
